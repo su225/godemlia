@@ -3,6 +3,7 @@ package network_test
 import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"github.com/su225/godemlia/src/server/config"
 	network "github.com/su225/godemlia/src/server/network"
 )
 
@@ -14,10 +15,10 @@ var _ = Describe("RoutingTable", func() {
 		Setting_LeafSplitThreshold uint32 = 5
 		Setting_PivotID            uint64 = 1024
 
-		ContactToBeAdded = &network.NodeInfo{
+		ContactToBeAdded = &config.NodeInfo{
 			NodeID:    uint64(1025),
 			IPAddress: "127.0.0.1",
-			UDPPort:   12345,
+			Port:      12345,
 		}
 	)
 

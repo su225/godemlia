@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/su225/godemlia/src/server/config"
 )
 
 // RoutingTable defines the nodes known to this node in
@@ -15,7 +17,7 @@ type RoutingTable interface {
 	// AddNode attempts to add a node to the table. Add can
 	// fail because the table is already full or because the
 	// provided node information is incorrect or nil
-	AddNode(node *NodeInfo) error
+	AddNode(node *config.NodeInfo) error
 
 	// RemoveNode attempts to remove the node with the given ID.
 	// It may fail because the node with the given ID is not
@@ -25,7 +27,7 @@ type RoutingTable interface {
 	// For a given nodeID returns at most k nodes which are
 	// closest to the given nodeID ordered by closest to the
 	// farthest node by closeness metric (XOR in this case)
-	GetClosestNodes(nodeID uint64, k uint32) ([]*NodeInfo, error)
+	GetClosestNodes(nodeID uint64, k uint32) ([]*config.NodeInfo, error)
 }
 
 var (
@@ -62,7 +64,7 @@ type TreeRoutingTableNode interface {
 // nodeInfoWithRecentInfo represents the information of the node along with
 // the local timestamp of last contact.
 type nodeInfoWithRecentInfo struct {
-	Info     *NodeInfo
+	Info     *config.NodeInfo
 	LastSeen uint64
 }
 
@@ -168,12 +170,12 @@ type TreeRoutingTable struct {
 type TableIsFullError struct {
 	NodeID                        uint64
 	LastAccessedTimestamp         uint64
-	LeastRecentlyAccessedNodeInfo *NodeInfo
+	LeastRecentlyAccessedNodeInfo *config.NodeInfo
 }
 
 func (terr TableIsFullError) Error() string {
 	return fmt.Sprintf("Insertion of %d failed. Candidate for removal = %d",
-		terr.NodeID, terr.LeastRecentlyAccessedNodeInfo.UDPPort)
+		terr.NodeID, terr.LeastRecentlyAccessedNodeInfo.Port)
 }
 
 var (
@@ -207,7 +209,7 @@ func CreateTreeRoutingTable(pivot uint64, proximity uint64, leafMaxSize uint32) 
 // and there is more space in the table for addition. If the node with the given ID exists
 // then ErrorNodeAlreadyExists is returned. If there is no space to add the node
 // contact information then ErrorTableIsFull
-func (rtbl *TreeRoutingTable) AddNode(node *NodeInfo) error {
+func (rtbl *TreeRoutingTable) AddNode(node *config.NodeInfo) error {
 	rtbl.mutex.Lock()
 	defer rtbl.mutex.Unlock()
 	if node == nil {
@@ -225,17 +227,17 @@ func (rtbl *TreeRoutingTable) RemoveNode(nodeID uint64) error {
 }
 
 // GetClosestNodes of TreeRoutingTable returns the k closest nodes for a given nodeID.
-func (rtbl *TreeRoutingTable) GetClosestNodes(nodeID uint64, k uint32) ([]*NodeInfo, error) {
+func (rtbl *TreeRoutingTable) GetClosestNodes(nodeID uint64, k uint32) ([]*config.NodeInfo, error) {
 	rtbl.mutex.RLock()
 	defer rtbl.mutex.RUnlock()
 	if k == 0 {
-		return []*NodeInfo{}, nil
+		return []*config.NodeInfo{}, nil
 	}
 	return rtbl.doGatherClosestNodes(rtbl.rootNode, rtbl.addressSize-1, nodeID, k), nil
 }
 
 // doAddNode is responsible for actually adding the node if applicable or returning appropriate error
-func (rtbl *TreeRoutingTable) doAddNode(bitIndex uint, prevNode TreeRoutingTableNode, curNode TreeRoutingTableNode, nodeInfo *NodeInfo) error {
+func (rtbl *TreeRoutingTable) doAddNode(bitIndex uint, prevNode TreeRoutingTableNode, curNode TreeRoutingTableNode, nodeInfo *config.NodeInfo) error {
 	if curNode == nil {
 		return nil
 	}
@@ -331,11 +333,11 @@ func (rtbl *TreeRoutingTable) doRemoveNode(bitIndex uint, prevNode TreeRoutingTa
 }
 
 // Get the nodes closest to the given nodeID.
-func (rtbl *TreeRoutingTable) doGatherClosestNodes(curNode TreeRoutingTableNode, bitIndex uint, nodeID uint64, requiredCount uint32) []*NodeInfo {
+func (rtbl *TreeRoutingTable) doGatherClosestNodes(curNode TreeRoutingTableNode, bitIndex uint, nodeID uint64, requiredCount uint32) []*config.NodeInfo {
 	if curNode == nil {
-		return []*NodeInfo{}
+		return []*config.NodeInfo{}
 	}
-	nodeList := make([]*NodeInfo, 0)
+	nodeList := make([]*config.NodeInfo, 0)
 	switch node := curNode.(type) {
 	case *LeafRoutingTableNode:
 		// If it is a leaf node then gather all the nodes and get the
@@ -347,8 +349,8 @@ func (rtbl *TreeRoutingTable) doGatherClosestNodes(curNode TreeRoutingTableNode,
 	case *NonLeafRoutingTableNode:
 		// If the size of the subtree rooted at this node is less than
 		// the number of required nodes then return all of them.
-		primaryPathNodeList := make([]*NodeInfo, 0)
-		auxillaryPathNodeList := make([]*NodeInfo, 0)
+		primaryPathNodeList := make([]*config.NodeInfo, 0)
+		auxillaryPathNodeList := make([]*config.NodeInfo, 0)
 		isOnePath := (nodeID & (1 << bitIndex)) > 0
 		if isOnePath {
 			primaryPathNodeList = rtbl.doGatherClosestNodes(node.GetOnePathNode(), bitIndex-1, nodeID, requiredCount)

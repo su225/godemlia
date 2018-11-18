@@ -20,20 +20,20 @@ service KademliaProtocol {
     rpc FindNode(FindNodeRequest) returns (FindNodeResponse) {}
 
     // For a given key find the value if it is present.
-    rpc FindValue(FindValueRequest) returns (FindValueRequest) {}
+    rpc FindValue(FindValueRequest) returns (FindValueResponse) {}
 }
 
 // This message is sent by the node wishing to join the network. It
 // should send its contact information along with it.
 message JoinNetworkRequest {
-    NodeInfo node_info = 1;
+    NodeInfo sender_node_info = 1;
 }
 
 // This message is sent by the node which is already in the network
 // containing the network-wide configuration containing replication
 // factor, concurrency factor and other configuration options.
 message JoinNetworkResponse {
-    string ip_address = 1;
+    NodeInfo sender_node_info = 1;
     uint32 replication_factor = 2;
     uint32 concurrency_factor = 3;
 }
@@ -41,17 +41,21 @@ message JoinNetworkResponse {
 // PingRequest is used by a node to probe if the other
 // node is alive. The field is not necessary. It is
 // understood by the other node that it is just probing
-message PingRequest {}
+message PingRequest {
+    NodeInfo sender_node_info = 1;
+}
 
 // PingResponse is used by a node to signal to the node
 // which sent the PingRequest that it is alive
-message PingResponse {}
+message PingResponse {
+    NodeInfo sender_node_info = 1;
+}
 
 // StoreRequest is used to store a piece of data in the
 // node receiving this request. The data is a key-value pair
 message StoreRequest {
-    string ip_address = 1;
-    string key = 2;
+    NodeInfo sender_node_info = 1;
+    uint64 key = 2;
     bytes value = 3;
 }
 
@@ -59,42 +63,43 @@ message StoreRequest {
 // request to store data that it has successfully stored
 // the data with the given key.
 message StoreResponse {
-    string ip_address = 1;
+    NodeInfo sender_node_info = 1;
     uint64 key = 2;
 }
 
 // FindNodeRequest is used to find the closest node to the
 // given a node_id. 
 message FindNodeRequest {
-    string ip_address = 1;
+    NodeInfo sender_node_info = 1;
     uint64 node_id = 2;
 }
 
 // FindNodeResponse is the reply to FindNodeRequest where
 // the closest known nodes to the given node_id is returned
 message FindNodeResponse {
-    string ip_address = 1;
+    NodeInfo sender_node_info = 1;
     uint64 node_id = 2;
     repeated NodeInfo closest = 3;
 }
 
 // FindValueRequest is used to find value given a key.
 message FindValueRequest {
-    string ip_address = 1;
+    NodeInfo sender_node_info = 1;
     uint64 key = 2;
 }
 
 // KeyValueResponse contains the value for the given key.
 message KeyValueResponse {
-    uint64 key = 1;
-    bytes value = 2;
+    NodeInfo sender_node_info = 1;
+    uint64 key = 2;
+    bytes value = 3;
 }
 
 // FindValueResponse for a given key is like FindNodeResponse
 // when the value for the key is not present in the node. If
 // it is present, then it returns key-value pair.
 message FindValueResponse {
-    string ip_address = 1;
+    NodeInfo sender_node_info = 1;
     oneof result {
         KeyValueResponse value = 2;
         FindNodeResponse nearest = 3;
@@ -105,7 +110,7 @@ message FindValueResponse {
 // a node and measure proximity to some other node with some
 // metric. In Kademlia it is Exclusive OR (XOR)
 message NodeInfo {
-    uint64 node_id = 2;
     string node_address = 1;
+    uint64 node_id = 2;
     uint32 udp_port = 3;
 }
