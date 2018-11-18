@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/su225/godemlia/src/server/config"
@@ -162,7 +161,6 @@ type TreeRoutingTable struct {
 	proximityThreshold uint64
 	leafSplitThreshold uint32
 	addressSize        uint
-	mutex              sync.RWMutex
 }
 
 // TableIsFullError is returned when nodes can no longer be split
@@ -201,7 +199,6 @@ func CreateTreeRoutingTable(pivot uint64, proximity uint64, leafMaxSize uint32) 
 		proximityThreshold: proximity,
 		leafSplitThreshold: leafMaxSize,
 		addressSize:        64,
-		mutex:              sync.RWMutex{},
 	}, nil
 }
 
@@ -210,8 +207,6 @@ func CreateTreeRoutingTable(pivot uint64, proximity uint64, leafMaxSize uint32) 
 // then ErrorNodeAlreadyExists is returned. If there is no space to add the node
 // contact information then ErrorTableIsFull
 func (rtbl *TreeRoutingTable) AddNode(node *config.NodeInfo) error {
-	rtbl.mutex.Lock()
-	defer rtbl.mutex.Unlock()
 	if node == nil {
 		return nil
 	}
@@ -221,15 +216,11 @@ func (rtbl *TreeRoutingTable) AddNode(node *config.NodeInfo) error {
 // RemoveNode of TreeRoutingTable removes the given contact info from the routing table. If the
 // node does not exist in the table then ErrorUnknownNode is thrown
 func (rtbl *TreeRoutingTable) RemoveNode(nodeID uint64) error {
-	rtbl.mutex.Lock()
-	defer rtbl.mutex.Unlock()
 	return rtbl.doRemoveNode(rtbl.addressSize-1, nil, rtbl.rootNode, nodeID)
 }
 
 // GetClosestNodes of TreeRoutingTable returns the k closest nodes for a given nodeID.
 func (rtbl *TreeRoutingTable) GetClosestNodes(nodeID uint64, k uint32) ([]*config.NodeInfo, error) {
-	rtbl.mutex.RLock()
-	defer rtbl.mutex.RUnlock()
 	if k == 0 {
 		return []*config.NodeInfo{}, nil
 	}

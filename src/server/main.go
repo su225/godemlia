@@ -36,7 +36,7 @@ func main() {
 	// supplied config is overriden by the actual network configuration if it is
 	// not in bootstrap mode.
 	log.Printf("Creating node config for node [%d, %s, %d]", *nodeID, *ipAddress, *port)
-	nodeContext, err := service.CreateNodeContext(suppliedConfig, currentNodeInfo)
+	nodeContext, err := service.CreateNodeContext(suppliedConfig, currentNodeInfo, 4)
 	if err != nil {
 		log.Printf("Could not create node context. Exiting...")
 		return

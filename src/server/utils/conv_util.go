@@ -33,3 +33,12 @@ func TransformToProtobufNodeInfo(nodes []*config.NodeInfo) []*pb.NodeInfo {
 	}
 	return protobufNodeInfo
 }
+
+// TrasnformToKademliaNodeInfo does the opposite of TransformToProtobufNodeInfo
+func TrasnformToKademliaNodeInfo(nodes []*pb.NodeInfo) []*config.NodeInfo {
+	kademliaNodeInfo := make([]*config.NodeInfo, len(nodes))
+	for idx, node := range nodes {
+		kademliaNodeInfo[idx] = GetKademliaNodeInfo(node)
+	}
+	return kademliaNodeInfo
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	pb "github.com/su225/godemlia/src/kademliapb"
 	"github.com/su225/godemlia/src/server/config"
@@ -37,31 +38,45 @@ type NodeContext struct {
 
 	// Communication handler to send messages to other nodes
 	CommHandler *network.CommunicationHandler
+
+	// RoutingTableRefresher refreshes the routing table by
+	// querying neighboring nodes for the closest nodes to
+	// this node's ID.
+	Refresher     *RoutingTableRefresher
+	RefreshPeriod time.Duration
 }
 
 // CreateNodeContext creates and initializes all the necessary components required
 // for a Kademlia node to function.
-func CreateNodeContext(netConfig *config.Configuration, nodeInfo *config.NodeInfo) (*NodeContext, error) {
+func CreateNodeContext(netConfig *config.Configuration, nodeInfo *config.NodeInfo, refreshPeriod time.Duration) (*NodeContext, error) {
 	nodeContext := &NodeContext{Config: netConfig, CurrentNodeInfo: nodeInfo}
 
 	// Create the routing table and add current node information to it
 	// This is required to mark the bucket to which the current node belongs to
 	// This is helpful in splitting buckets when needed
-	treeRoutingTable, err := network.CreateTreeRoutingTable(nodeInfo.NodeID, 0, netConfig.ConcurrencyFactor)
+	treeRoutingTable, err := network.CreateTreeRoutingTable(nodeInfo.NodeID, 1024, netConfig.ConcurrencyFactor)
 	if err != nil {
 		log.Printf("Cannot create routing table.")
 		return nil, err
 	}
 	treeRoutingTable.AddNode(nodeInfo)
-	nodeContext.ContactNodeTable = treeRoutingTable
 
 	// Initialize the protocol buffer server to handle various Kademlia protocol messages
 	msgHandler := CreateKademliaMessagesHandler(nodeContext)
 	nodeContext.MessagesHandler = msgHandler
 
 	// Initialize the communication handler
-	commHandler := network.CreateCommunicationHandler(treeRoutingTable)
+	commHandler := network.CreateCommunicationHandler(treeRoutingTable, nodeInfo)
 	nodeContext.CommHandler = commHandler
+
+	// This is the smart routing table which adds liveliness probe capabilities
+	nodeContext.ContactNodeTable = CreateRoutingTableHandler(commHandler, treeRoutingTable)
+
+	// Create a new routing table refresher
+	nodeContext.RefreshPeriod = refreshPeriod
+	refresher := CreateRoutingTableRefresher(commHandler, nodeContext.ContactNodeTable, nodeContext.RefreshPeriod,
+		nodeContext.Config, nodeInfo.NodeID)
+	nodeContext.Refresher = refresher
 
 	return nodeContext, nil
 }
@@ -81,7 +96,7 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 		// return the configuration then set it and stop.
 		joinedNetwork := false
 		for _, joinAddr := range joinAddresses {
-			if clusterConfig, err := ctx.CommHandler.JoinNetwork(ctx.CurrentNodeInfo, joinAddr); err != nil {
+			if clusterConfig, err := ctx.CommHandler.JoinNetwork(joinAddr); err != nil {
 				log.Printf("Unable to obtain configuration through %s. Reason=%s", joinAddr, err.Error())
 			} else {
 				joinedNetwork = true
@@ -97,6 +112,10 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 			return errors.New("Cannot join network")
 		}
 	}
+
+	// Start the table refresh job too
+	log.Printf("Starting routing table refresher")
+	ctx.Refresher.Start()
 
 	// Configure gRPC server and try to start it. Note that if the server starts successfully,
 	// then this thread blocks. So if there is anything else to be processed make sure this is
