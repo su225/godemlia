@@ -44,6 +44,10 @@ type NodeContext struct {
 	// this node's ID.
 	Refresher     *RoutingTableRefresher
 	RefreshPeriod time.Duration
+
+	// ClosestNodeLocator is responsible for finding closest
+	// node for a given key/nodeID
+	Locator *ClosestNodeLocator
 }
 
 // CreateNodeContext creates and initializes all the necessary components required
@@ -77,6 +81,9 @@ func CreateNodeContext(netConfig *config.Configuration, nodeInfo *config.NodeInf
 	refresher := CreateRoutingTableRefresher(commHandler, nodeContext.ContactNodeTable, nodeContext.RefreshPeriod,
 		nodeContext.Config, nodeInfo.NodeID)
 	nodeContext.Refresher = refresher
+
+	// Create closest node locator
+	nodeContext.Locator = &ClosestNodeLocator{NodeCtx: nodeContext}
 
 	return nodeContext, nil
 }
