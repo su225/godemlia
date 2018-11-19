@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"time"
 
+	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/render"
 	pb "github.com/su225/godemlia/src/kademliapb"
 	"github.com/su225/godemlia/src/server/config"
 	"github.com/su225/godemlia/src/server/network"
@@ -48,12 +52,25 @@ type NodeContext struct {
 	// ClosestNodeLocator is responsible for finding closest
 	// node for a given key/nodeID
 	Locator *ClosestNodeLocator
+
+	// RESTConfig contains the configuration of the REST
+	// server for the clients to contact.
+	RESTConfig           *config.RESTServerConfiguration
+	ClientRequestHandler RESTHandler
 }
 
 // CreateNodeContext creates and initializes all the necessary components required
 // for a Kademlia node to function.
-func CreateNodeContext(netConfig *config.Configuration, nodeInfo *config.NodeInfo, refreshPeriod time.Duration) (*NodeContext, error) {
-	nodeContext := &NodeContext{Config: netConfig, CurrentNodeInfo: nodeInfo}
+func CreateNodeContext(netConfig *config.Configuration,
+	nodeInfo *config.NodeInfo,
+	refreshPeriod time.Duration,
+	restConfig *config.RESTServerConfiguration,
+) (*NodeContext, error) {
+	nodeContext := &NodeContext{
+		Config:          netConfig,
+		CurrentNodeInfo: nodeInfo,
+		RESTConfig:      restConfig,
+	}
 
 	// Create the routing table and add current node information to it
 	// This is required to mark the bucket to which the current node belongs to
@@ -84,6 +101,9 @@ func CreateNodeContext(netConfig *config.Configuration, nodeInfo *config.NodeInf
 
 	// Create closest node locator
 	nodeContext.Locator = &ClosestNodeLocator{NodeCtx: nodeContext}
+
+	// Create REST Server handler
+	nodeContext.ClientRequestHandler = CreateKademliaRESTHandler(nodeContext)
 
 	return nodeContext, nil
 }
@@ -135,9 +155,49 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 	pb.RegisterKademliaProtocolServer(grpcServer, ctx.MessagesHandler)
 	reflection.Register(grpcServer)
 
+	// Once RPC listener is up, start the REST server as well.
+	ctx.startRESTServer()
+
 	log.Printf("Starting RPC server at %s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.CurrentNodeInfo.Port)
 	if serveErr := grpcServer.Serve(listener); serveErr != nil {
 		return serveErr
 	}
 	return nil
+}
+
+// startRESTServer starts the REST server at the specified port in this node's
+// IP Address. Note that RPC and REST Server ports must be different.
+func (ctx *NodeContext) startRESTServer() {
+	chiRouter := ctx.getChiRouter()
+	restServerListenAddress := fmt.Sprintf("%s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.RESTConfig.RESTPort)
+	httpListener, httpListenerErr := net.Listen("tcp", restServerListenAddress)
+	if httpListenerErr != nil {
+		log.Fatalf("Error while starting REST server at address %s. Reason=%s", restServerListenAddress, httpListenerErr.Error())
+		return
+	}
+
+	// Once the HTTP listener is up, start serving client requests.
+	// This must be called asynchronously because this should not block
+	// starting of RPC server.
+	log.Printf("Starting REST server at address %s", restServerListenAddress)
+	go func() {
+		if httpServeErr := http.Serve(httpListener, chiRouter); httpServeErr != nil {
+			log.Fatalf("Cannot bring up REST server. Reason=%s", httpServeErr.Error())
+		}
+	}()
+}
+
+// getChiRouter sets up routes and handlers for the REST server and returns
+// the handle to the multiplexer.
+func (ctx *NodeContext) getChiRouter() *chi.Mux {
+	chiRouter := chi.NewRouter()
+	chiRouter.Use(
+		render.SetContentType(render.ContentTypeJSON),
+		middleware.Recoverer,
+		middleware.Timeout(60*time.Second),
+	)
+
+	chiRouter.Get("/data/{key}", ctx.ClientRequestHandler.GetData)
+	chiRouter.Post("/data", ctx.ClientRequestHandler.PutData)
+	return chiRouter
 }

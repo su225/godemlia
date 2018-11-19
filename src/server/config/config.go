@@ -16,6 +16,12 @@ type Configuration struct {
 	ConcurrencyFactor uint32
 }
 
+// RESTServerConfiguration specifies the REST configuration of
+// this node. Clients can contact cluster nodes via REST server
+type RESTServerConfiguration struct {
+	RESTPort uint32
+}
+
 // NodeInfo contains the information required to contact
 // a given node and measure the distance to any other node
 // for a given closeness metric -XOR in Kademlia.
