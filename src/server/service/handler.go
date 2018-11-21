@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	pb "github.com/su225/godemlia/src/kademliapb"
@@ -50,6 +51,10 @@ func (h *KademliaMessagesHandler) Store(ctx context.Context, req *pb.StoreReques
 	log.Printf("[%d @ %s:%d] Received STORE %d", req.SenderNodeInfo.NodeId,
 		req.SenderNodeInfo.NodeAddress, req.SenderNodeInfo.UdpPort, req.Key)
 	h.tryUpdateContactTableOrLogError(utils.GetKademliaNodeInfo(req.SenderNodeInfo))
+	if err := h.nodeContext.NodeDataContext.Store.AddOrReplace(req.Key, req.Value); err != nil {
+		return nil, fmt.Errorf("Cannot store key %d", req.Key)
+	}
+	log.Printf("[STORE] Stored key %d", req.Key)
 	return &pb.StoreResponse{
 		SenderNodeInfo: utils.GetProtoBufNodeInfo(h.nodeContext.CurrentNodeInfo),
 		Key:            req.Key,
@@ -80,7 +85,21 @@ func (h *KademliaMessagesHandler) FindValue(ctx context.Context, req *pb.FindVal
 	log.Printf("[%d @ %s:%d] Received FIND_VALUE %d", req.SenderNodeInfo.NodeId,
 		req.SenderNodeInfo.NodeAddress, req.SenderNodeInfo.UdpPort, req.Key)
 	h.tryUpdateContactTableOrLogError(utils.GetKademliaNodeInfo(req.SenderNodeInfo))
-	return nil, nil
+	if foundValue, findErr := h.nodeContext.NodeDataContext.Store.Get(req.Key); findErr != nil {
+		log.Printf("Cannot find value for key %d", req.Key)
+		return nil, findErr
+	} else {
+		return &pb.FindValueResponse{
+			SenderNodeInfo: utils.GetProtoBufNodeInfo(h.nodeContext.CurrentNodeInfo),
+			Result: &pb.FindValueResponse_Value{
+				Value: &pb.KeyValueResponse{
+					SenderNodeInfo: utils.GetProtoBufNodeInfo(h.nodeContext.CurrentNodeInfo),
+					Key:            req.Key,
+					Value:          foundValue,
+				},
+			},
+		}, nil
+	}
 }
 
 // tryUpdateContactTableOrLogError tries to update the routing table with the information of the node

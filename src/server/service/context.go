@@ -57,6 +57,11 @@ type NodeContext struct {
 	// server for the clients to contact.
 	RESTConfig           *config.RESTServerConfiguration
 	ClientRequestHandler RESTHandler
+
+	// NodeDataContext is responsible for handling data
+	// related operations like storage and retrieval,
+	// rebalancing and garbage collecting stale data etc.
+	*NodeDataContext
 }
 
 // CreateNodeContext creates and initializes all the necessary components required
@@ -101,6 +106,9 @@ func CreateNodeContext(netConfig *config.Configuration,
 
 	// Create closest node locator
 	nodeContext.Locator = &ClosestNodeLocator{NodeCtx: nodeContext}
+
+	// Create Node data context
+	nodeContext.NodeDataContext = CreateNodeDataContext(nodeContext)
 
 	// Create REST Server handler
 	nodeContext.ClientRequestHandler = CreateKademliaRESTHandler(nodeContext)

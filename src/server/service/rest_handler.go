@@ -48,6 +48,13 @@ func (h *KademliaRESTHandler) GetData(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		log.Printf("Request to GET key %d", key)
+		if retrieved, retrieveErr := h.nodeCtx.NodeDataContext.DataRetriever.RetrieveKVPair(key); retrieveErr != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		} else {
+			w.WriteHeader(http.StatusOK)
+			render.JSON(w, r, string(retrieved))
+		}
 	}
 }
 
@@ -63,5 +70,11 @@ func (h *KademliaRESTHandler) PutData(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	log.Printf("Request to POST key-value pair %d:%s", keyValuePair.Key, keyValuePair.Value)
+	log.Printf("Request to POST key-value pair %d:%v", keyValuePair.Key, keyValuePair.Value)
+	if storeErr := h.nodeCtx.NodeDataContext.DataStorer.StoreKVPair(keyValuePair.Key, []byte(keyValuePair.Value)); storeErr != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Successfully saved key %d", keyValuePair.Key)
+	w.WriteHeader(http.StatusOK)
 }

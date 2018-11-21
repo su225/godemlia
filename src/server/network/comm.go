@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -98,6 +99,59 @@ func (comm *CommunicationHandler) GetClosestNodes(address string, nodeID uint64)
 		return utils.TrasnformToKademliaNodeInfo(closestNodes), nil
 	}
 	return []*config.NodeInfo{}, err
+}
+
+// Store sends request to store a key value pair
+func (comm *CommunicationHandler) Store(address string, key uint64, value []byte) (uint64, error) {
+	result, err := comm.sendKademliaProtocolMessage(address, 2*time.Second,
+		func(ctx context.Context, client pb.KademliaProtocolClient) (interface{}, error) {
+			response, err := client.Store(ctx, &pb.StoreRequest{
+				SenderNodeInfo: utils.GetProtoBufNodeInfo(comm.CurNodeInfo),
+				Key:            key,
+				Value:          value,
+			})
+			if err != nil {
+				return nil, err
+			}
+			// TODO: Refactor these repetitions.
+			kadNodeInfo := utils.GetKademliaNodeInfo(response.SenderNodeInfo)
+			comm.updateContactNodeInfo(kadNodeInfo)
+			return response.Key, nil
+		})
+	if err != nil {
+		return 0, err
+	}
+	if keyResult, ok := result.(uint64); ok {
+		return keyResult, nil
+	}
+	return 0, err
+}
+
+// FindValue finds the value for a given key
+func (comm *CommunicationHandler) FindValue(address string, key uint64) ([]byte, error) {
+	result, err := comm.sendKademliaProtocolMessage(address, 2*time.Second,
+		func(ctx context.Context, client pb.KademliaProtocolClient) (interface{}, error) {
+			response, err := client.FindValue(ctx, &pb.FindValueRequest{
+				SenderNodeInfo: utils.GetProtoBufNodeInfo(comm.CurNodeInfo),
+				Key:            key,
+			})
+			if err != nil {
+				return nil, err
+			}
+			kadNodeInfo := utils.GetKademliaNodeInfo(response.SenderNodeInfo)
+			comm.updateContactNodeInfo(kadNodeInfo)
+			return response.Result, nil
+		})
+	if err != nil {
+		return []byte{}, nil
+	}
+	switch resp := result.(type) {
+	case *pb.FindValueResponse_Nearest:
+		return []byte{}, fmt.Errorf("Cannot find value %d", key)
+	case *pb.FindValueResponse_Value:
+		return resp.Value.Value, nil
+	}
+	return []byte{}, nil
 }
 
 // sendKademliaProtocolMessage opens a connection to the destination node and
