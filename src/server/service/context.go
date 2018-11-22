@@ -166,6 +166,9 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 	// Once RPC listener is up, start the REST server as well.
 	ctx.startRESTServer()
 
+	// Start the data related services
+	ctx.NodeDataContext.Start()
+
 	log.Printf("Starting RPC server at %s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.CurrentNodeInfo.Port)
 	if serveErr := grpcServer.Serve(listener); serveErr != nil {
 		return serveErr

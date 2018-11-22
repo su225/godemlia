@@ -45,7 +45,6 @@ func (refresher *RoutingTableRefresher) Start() {
 	refresher.Ticker = time.NewTicker(refresher.RefreshPeriod * time.Second)
 	go func() {
 		for range refresher.Ticker.C {
-			log.Printf("Refreshing routing table...")
 			refresher.RefreshTable()
 		}
 	}()

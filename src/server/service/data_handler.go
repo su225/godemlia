@@ -3,6 +3,9 @@ package service
 import (
 	"fmt"
 	"log"
+	"time"
+
+	"github.com/su225/godemlia/src/server/config"
 )
 
 // NodeDataContext handles data related functionality like retrieving, storing
@@ -38,14 +41,23 @@ type NodeDataContext struct {
 // for handling all data related functionality of the node - like storing,
 // retrieving, republishing and garbage collection.
 func CreateNodeDataContext(nodeContext *NodeContext) *NodeDataContext {
-	return &NodeDataContext{
+	nodeDataContext := &NodeDataContext{
 		NodeCtx:          nodeContext,
 		Store:            CreateDataStore(),
 		DataStorer:       &DataStorageHandler{nodeContext},
 		DataRetriever:    &DataRetrievalHandler{nodeContext},
-		DataRepublisher:  &DataRepublishHandler{},
 		GarbageCollector: &StaleDataHandler{},
 	}
+	// Initialize data republish handler to republish the data for specified interval in time
+	// For now it is hardcoded to 10 seconds. Typically it is should be around an hour. It is
+	// ideal to push this value to config.Configuration.
+	nodeDataContext.DataRepublisher = CreateDataRepublishHandler(nodeContext, nodeDataContext, nodeContext.Config.ReplicationFactor+1, 10*time.Second)
+	return nodeDataContext
+}
+
+// Start starts data republisher and garbage collector
+func (dctx *NodeDataContext) Start() {
+	go dctx.DataRepublisher.Start()
 }
 
 // DataStorageHandler is responsible for locating the
@@ -109,6 +121,89 @@ func (dr *DataRetrievalHandler) RetrieveKVPair(key uint64) ([]byte, error) {
 // DataRepublishHandler is responsible for transferring data to
 // newly joined nodes or periodically republish data to keep it fresh
 type DataRepublishHandler struct {
+	*NodeContext
+	*NodeDataContext
+	// NeighborCount describes the number of neighbors to republish to
+	// It is typically equal to the replication factor
+	NeighborCount uint32
+	// RepublishInterval describes the period of running
+	// republish job.
+	RepublishInterval time.Duration
+	// RepublishTicker is the channel which receives signal periodically
+	// to republish the data. Channel should be closed to stop that
+	RepublishTicker *time.Ticker
+}
+
+// CreateDataRepublishHandler creates a new instance of data republisher. It needs the
+// number of neighbors to republish for.
+func CreateDataRepublishHandler(ctx *NodeContext, dctx *NodeDataContext, neighbors uint32, duration time.Duration) *DataRepublishHandler {
+	return &DataRepublishHandler{
+		NodeContext:       ctx,
+		NodeDataContext:   dctx,
+		NeighborCount:     neighbors,
+		RepublishInterval: duration,
+	}
+}
+
+// Start starts the data republishing service
+func (dp *DataRepublishHandler) Start() {
+	dp.RepublishTicker = time.NewTicker(dp.RepublishInterval)
+	go func() {
+		for range dp.RepublishTicker.C {
+			dp.RepublishData()
+		}
+	}()
+}
+
+// RepublishData republishes data to the neighbor node if and only if this node is
+// one of the top 3 closest nodes to that key and the neighbor is also among closest.
+func (dp *DataRepublishHandler) RepublishData() {
+	currentNodeID := dp.NodeContext.CurrentNodeInfo.NodeID
+	closestNodes, err := dp.NodeContext.ContactNodeTable.GetClosestNodes(currentNodeID, dp.NeighborCount+1)
+	if err != nil {
+		log.Printf("[REPUBLISHER] Error: Unable to find the closest nodes. Reason=%s", err.Error())
+		return
+	}
+	keysToRepublish := dp.NodeDataContext.Store.GetAllKeys()
+	for _, closestNode := range closestNodes {
+		go dp.publishToNode(dp.NodeContext.CurrentNodeInfo, closestNode, keysToRepublish)
+	}
+}
+
+// publishToNode republishes selected keys to a particular node
+func (dp *DataRepublishHandler) publishToNode(currentNodeInfo *config.NodeInfo, nodeInfo *config.NodeInfo, keysToRepublish []uint64) {
+	nodeAddress := fmt.Sprintf("%s:%d", nodeInfo.IPAddress, nodeInfo.Port)
+	for _, k := range keysToRepublish {
+		closestNodesToKey, err := dp.NodeContext.ContactNodeTable.GetClosestNodes(k, dp.NeighborCount)
+		if err != nil {
+			log.Printf("[REPUBLISHER] Error: Cannot get closest nodes for key %d. Reason=%s", k, err.Error())
+			continue
+		}
+		if dp.isPresentWithin(currentNodeInfo.NodeID, closestNodesToKey, 3) && dp.isPresentWithin(nodeInfo.NodeID, closestNodesToKey, len(closestNodesToKey)+1) {
+			if value, err := dp.NodeDataContext.Store.Get(k); err != nil {
+				log.Printf("[REPUBLISHER] Cannot get the value for key %d. Reason=%s", k, err.Error())
+				continue
+			} else {
+				if storedKey, err := dp.NodeContext.CommHandler.Store(nodeAddress, k, value); err != nil {
+					log.Printf("[REPUBLISHER] Failed to refresh value for key %d. Reason=%s", k, err.Error())
+				} else {
+					log.Printf("[REPUBLISHER] Successfully republished key %d to %s", storedKey, nodeAddress)
+				}
+			}
+		}
+	}
+}
+
+func (dp *DataRepublishHandler) isPresentWithin(requiredNodeID uint64, closestNodes []*config.NodeInfo, rank int) bool {
+	for i, node := range closestNodes {
+		if i >= rank {
+			return false
+		}
+		if node.NodeID == requiredNodeID {
+			return true
+		}
+	}
+	return false
 }
 
 // StaleDataHandler is responsible for removing the keys which are not

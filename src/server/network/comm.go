@@ -165,7 +165,7 @@ func (comm *CommunicationHandler) sendKademliaProtocolMessage(
 	if err != nil {
 		return false, err
 	}
-	ctx, cancel := comm.getContextWithCancelAndTimeout(2)
+	ctx, cancel := comm.getContextWithCancelAndTimeout(timeout)
 	defer cancel()
 	defer grpcConn.Close()
 	return fn(ctx, client)
@@ -184,7 +184,7 @@ func (comm *CommunicationHandler) getClientWithConnection(addr string) (*grpc.Cl
 
 // Returns the context with cancel function and timeout.
 func (comm *CommunicationHandler) getContextWithCancelAndTimeout(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), timeout*time.Second)
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 // updateContactNodeInfo updates the routing table and the mapping from nodeID to
