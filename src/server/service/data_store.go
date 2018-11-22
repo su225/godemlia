@@ -79,9 +79,22 @@ func (ds *DataStore) Get(key uint64) ([]byte, error) {
 // optimizing republishing as it is not scalable to pull all the keys and
 // store it in a slice
 func (ds *DataStore) GetAllKeys() []uint64 {
+	ds.dataStoreLock.RLock()
+	defer ds.dataStoreLock.RUnlock()
 	keys := make([]uint64, 0)
 	for k := range ds.kvSet {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// GetRefreshTime returns the last refreshed time of the key.
+func (ds *DataStore) GetRefreshTime(k uint64) (int64, error) {
+	ds.dataStoreLock.RLock()
+	defer ds.dataStoreLock.RUnlock()
+	if refTime, present := ds.kvTime[k]; !present {
+		return 0, fmt.Errorf("Key %d not found", k)
+	} else {
+		return refTime, nil
+	}
 }

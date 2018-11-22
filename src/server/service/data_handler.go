@@ -42,22 +42,25 @@ type NodeDataContext struct {
 // retrieving, republishing and garbage collection.
 func CreateNodeDataContext(nodeContext *NodeContext) *NodeDataContext {
 	nodeDataContext := &NodeDataContext{
-		NodeCtx:          nodeContext,
-		Store:            CreateDataStore(),
-		DataStorer:       &DataStorageHandler{nodeContext},
-		DataRetriever:    &DataRetrievalHandler{nodeContext},
-		GarbageCollector: &StaleDataHandler{},
+		NodeCtx:       nodeContext,
+		Store:         CreateDataStore(),
+		DataStorer:    &DataStorageHandler{nodeContext},
+		DataRetriever: &DataRetrievalHandler{nodeContext},
 	}
 	// Initialize data republish handler to republish the data for specified interval in time
 	// For now it is hardcoded to 10 seconds. Typically it is should be around an hour. It is
 	// ideal to push this value to config.Configuration.
 	nodeDataContext.DataRepublisher = CreateDataRepublishHandler(nodeContext, nodeDataContext, nodeContext.Config.ReplicationFactor+1, 10*time.Second)
+	// Initialize the garbage collector. Garbage collection interval must be greater than data republishing interval so that
+	// data is not declared stale early. Eventually, they will be configurable. For now, they are hardcoded.
+	nodeDataContext.GarbageCollector = CreateStaleDataHandler(nodeDataContext, 10*time.Second, 20*time.Second)
 	return nodeDataContext
 }
 
 // Start starts data republisher and garbage collector
 func (dctx *NodeDataContext) Start() {
 	go dctx.DataRepublisher.Start()
+	go dctx.GarbageCollector.Start()
 }
 
 // DataStorageHandler is responsible for locating the
@@ -148,6 +151,7 @@ func CreateDataRepublishHandler(ctx *NodeContext, dctx *NodeDataContext, neighbo
 // Start starts the data republishing service
 func (dp *DataRepublishHandler) Start() {
 	dp.RepublishTicker = time.NewTicker(dp.RepublishInterval)
+	log.Printf("[REPUBLISHER] Starting republisher...")
 	go func() {
 		for range dp.RepublishTicker.C {
 			dp.RepublishData()
@@ -209,4 +213,48 @@ func (dp *DataRepublishHandler) isPresentWithin(requiredNodeID uint64, closestNo
 // StaleDataHandler is responsible for removing the keys which are not
 // being refreshed for a while.
 type StaleDataHandler struct {
+	*NodeDataContext
+	// GCTimeout specifies the period between two invocations
+	// of stale data removal
+	GCTimeout       time.Duration
+	GCTimeoutTicker *time.Ticker
+	// DataTimeout specifies the time period after
+	// which the data is considered stale
+	DataTimeout time.Duration
+}
+
+// CreateStaleDataHandler creates a new stale data handler
+func CreateStaleDataHandler(dctx *NodeDataContext, gct time.Duration, dt time.Duration) *StaleDataHandler {
+	return &StaleDataHandler{
+		NodeDataContext: dctx,
+		GCTimeout:       gct,
+		DataTimeout:     dt,
+	}
+}
+
+// Start starts the data republishing service
+func (gc *StaleDataHandler) Start() {
+	gc.GCTimeoutTicker = time.NewTicker(gc.GCTimeout)
+	log.Printf("[GC] Starting Stale Data handler...")
+	go func() {
+		for range gc.GCTimeoutTicker.C {
+			gc.RemoveStaleData()
+		}
+	}()
+}
+
+// RemoveStaleData removes cleans up stale data if any
+func (gc *StaleDataHandler) RemoveStaleData() {
+	for _, k := range gc.NodeDataContext.Store.GetAllKeys() {
+		if lastRefreshTime, err := gc.NodeDataContext.Store.GetRefreshTime(k); err != nil {
+			log.Printf("[GC] Cannot get last refreshed info for %d. Reason=%s", k, err.Error())
+			continue
+		} else {
+			interval := time.Now().UnixNano() - lastRefreshTime
+			if interval > gc.DataTimeout.Nanoseconds() {
+				log.Printf("[GC] Remove key %d from the store as it is stale", k)
+				gc.NodeDataContext.Store.Remove(k)
+			}
+		}
+	}
 }
