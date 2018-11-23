@@ -123,28 +123,30 @@ func CreateNodeContext(netConfig *config.Configuration,
 func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []string) error {
 	// If this is not a bootstrap node then try to obtain configuration
 	// from one of the nodes already in the network.
-	if !isBootstrap {
-		if len(joinAddresses) == 0 {
-			return errors.New("At least one join address must be specified")
+	if len(joinAddresses) == 0 && !isBootstrap {
+		return errors.New("At least one join address must be specified")
+	}
+	// Try joining the cluster by trying the addresses one by one. If one of them
+	// return the configuration then set it and stop.
+	joinedNetwork := false
+	for _, joinAddr := range joinAddresses {
+		if clusterConfig, err := ctx.CommHandler.JoinNetwork(joinAddr); err != nil {
+			log.Printf("Unable to obtain configuration through %s. Reason=%s", joinAddr, err.Error())
+		} else {
+			joinedNetwork = true
+			ctx.Config = clusterConfig
+			log.Printf("Obtained configuration from %s successfully", joinAddr)
+			log.Printf("Concurrency=%d, Replication=%d",
+				clusterConfig.ConcurrencyFactor, clusterConfig.ReplicationFactor)
+			break
 		}
-		// Try joining the cluster by trying the addresses one by one. If one of them
-		// return the configuration then set it and stop.
-		joinedNetwork := false
-		for _, joinAddr := range joinAddresses {
-			if clusterConfig, err := ctx.CommHandler.JoinNetwork(joinAddr); err != nil {
-				log.Printf("Unable to obtain configuration through %s. Reason=%s", joinAddr, err.Error())
-			} else {
-				joinedNetwork = true
-				ctx.Config = clusterConfig
-				log.Printf("Obtained configuration from %s successfully", joinAddr)
-				log.Printf("Concurrency=%d, Replication=%d",
-					clusterConfig.ConcurrencyFactor, clusterConfig.ReplicationFactor)
-				break
-			}
-		}
-		if !joinedNetwork {
-			log.Printf("Unable to join the network. Terminating...")
+	}
+	if !joinedNetwork {
+		log.Printf("Unable to join the network. Terminating...")
+		if !isBootstrap {
 			return errors.New("Cannot join network")
+		} else {
+			log.Printf("This can be a bootstrap node. Continue..")
 		}
 	}
 

@@ -32,8 +32,7 @@ ENV BOOTSTRAP=true        \
     REST_PORT=6667        \
     CONCURRENCY=5         \
     REPLICATION=8         \
-    NODE_BIN_PATH=/node   \
-    NODE_ID=100
+    NODE_BIN_PATH=/node
 
 WORKDIR /node
 
