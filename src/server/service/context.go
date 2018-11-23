@@ -124,34 +124,21 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 	// If this is not a bootstrap node then try to obtain configuration
 	// from one of the nodes already in the network.
 	if len(joinAddresses) == 0 && !isBootstrap {
-		return errors.New("At least one join address must be specified")
+		return errors.New("[JOIN] At least one join address must be specified")
 	}
 	// Try joining the cluster by trying the addresses one by one. If one of them
 	// return the configuration then set it and stop.
-	joinedNetwork := false
-	for _, joinAddr := range joinAddresses {
-		if clusterConfig, err := ctx.CommHandler.JoinNetwork(joinAddr); err != nil {
-			log.Printf("Unable to obtain configuration through %s. Reason=%s", joinAddr, err.Error())
-		} else {
-			joinedNetwork = true
-			ctx.Config = clusterConfig
-			log.Printf("Obtained configuration from %s successfully", joinAddr)
-			log.Printf("Concurrency=%d, Replication=%d",
-				clusterConfig.ConcurrencyFactor, clusterConfig.ReplicationFactor)
-			break
-		}
-	}
-	if !joinedNetwork {
-		log.Printf("Unable to join the network. Terminating...")
+	if joinedNetwork := ctx.joinNetwork(joinAddresses, uint32(3)); !joinedNetwork {
+		log.Printf("[JOIN] Unable to join the network. Terminating...")
 		if !isBootstrap {
 			return errors.New("Cannot join network")
 		} else {
-			log.Printf("This can be a bootstrap node. Continue..")
+			log.Printf("[JOIN] This can be a bootstrap node. Continue..")
 		}
 	}
 
 	// Start the table refresh job too
-	log.Printf("Starting routing table refresher")
+	log.Printf("[NODE] Starting routing table refresher")
 	ctx.Refresher.Start()
 
 	// Configure gRPC server and try to start it. Note that if the server starts successfully,
@@ -171,11 +158,46 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 	// Start the data related services
 	ctx.NodeDataContext.Start()
 
-	log.Printf("Starting RPC server at %s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.CurrentNodeInfo.Port)
+	log.Printf("[NODE] Starting RPC server at %s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.CurrentNodeInfo.Port)
 	if serveErr := grpcServer.Serve(listener); serveErr != nil {
 		return serveErr
 	}
 	return nil
+}
+
+// joinNetwork is responsible for contacting a node and getting the cluster configuration. One of the mechanism
+// is to contact one of the addresses specified.
+func (ctx *NodeContext) joinNetwork(joinAddresses []string, maxAttempts uint32) bool {
+	joinedNetwork := false
+	// For each join address given, try connecting the node to get the configuration
+	// Retry with exponential delay. If all attempts to join the addresses in the cluster
+	// fail then return false. Otherwise it is true.
+	for _, joinAddr := range joinAddresses {
+		for attempt := uint32(1); attempt <= maxAttempts; attempt++ {
+			log.Printf("[JOIN] Attempting to join on %s. Attempt %d", joinAddr, attempt)
+			if clusterConfig, err := ctx.CommHandler.JoinNetwork(joinAddr); err != nil {
+				log.Printf("[JOIN] Unable to obtain configuration through %s. Reason=%s", joinAddr, err.Error())
+			} else {
+				joinedNetwork = true
+				ctx.Config = clusterConfig
+				log.Printf("[JOIN] Obtained configuration from %s successfully", joinAddr)
+				log.Printf("[JOIN] Concurrency=%d, Replication=%d",
+					clusterConfig.ConcurrencyFactor, clusterConfig.ReplicationFactor)
+				break
+			}
+			// If it is the last attempt then don't wait. Move one
+			if attempt < maxAttempts {
+				waitDurationInSecond := (1 << (attempt - 1)) * time.Second
+				log.Printf("[JOIN] Attempt %d to join cluster through %s failed. Trying after %f seconds",
+					attempt, joinAddr, waitDurationInSecond.Seconds())
+				time.Sleep(waitDurationInSecond)
+			}
+		}
+		if joinedNetwork {
+			break
+		}
+	}
+	return joinedNetwork
 }
 
 // startRESTServer starts the REST server at the specified port in this node's
@@ -185,17 +207,17 @@ func (ctx *NodeContext) startRESTServer() {
 	restServerListenAddress := fmt.Sprintf("%s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.RESTConfig.RESTPort)
 	httpListener, httpListenerErr := net.Listen("tcp", restServerListenAddress)
 	if httpListenerErr != nil {
-		log.Fatalf("Error while starting REST server at address %s. Reason=%s", restServerListenAddress, httpListenerErr.Error())
+		log.Fatalf("[NODE] Error while starting REST server at address %s. Reason=%s", restServerListenAddress, httpListenerErr.Error())
 		return
 	}
 
 	// Once the HTTP listener is up, start serving client requests.
 	// This must be called asynchronously because this should not block
 	// starting of RPC server.
-	log.Printf("Starting REST server at address %s", restServerListenAddress)
+	log.Printf("[NODE] Starting REST server at address %s", restServerListenAddress)
 	go func() {
 		if httpServeErr := http.Serve(httpListener, chiRouter); httpServeErr != nil {
-			log.Fatalf("Cannot bring up REST server. Reason=%s", httpServeErr.Error())
+			log.Fatalf("[NODE] Cannot bring up REST server. Reason=%s", httpServeErr.Error())
 		}
 	}()
 }
