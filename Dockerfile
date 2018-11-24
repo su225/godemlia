@@ -24,16 +24,6 @@ USER knodeuser
 COPY --from=build /go/src/github.com/su225/godemlia/src/server/server /node
 COPY --from=build /go/src/github.com/su225/godemlia/script/node-start.sh /node
 
-# Set the environment variables denoting various node settings
-# This container represents a bootstrap node
-ENV BOOTSTRAP=true        \
-    LISTEN_ADDR=127.0.0.1 \
-    RPC_PORT=6666         \
-    REST_PORT=6667        \
-    CONCURRENCY=5         \
-    REPLICATION=8         \
-    NODE_BIN_PATH=/node
-
 WORKDIR /node
 
 # Start the node with the settings specified

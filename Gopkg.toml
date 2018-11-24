@@ -48,3 +48,7 @@
 [prune]
   go-tests = true
   unused-packages = true
+
+[[constraint]]
+  name = "github.com/kubernetes/client-go"
+  version = "1.5.1"

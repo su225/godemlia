@@ -16,6 +16,9 @@ import (
 	"github.com/su225/godemlia/src/server/network"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
+	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // NodeContext provides access to various parts of
@@ -62,6 +65,10 @@ type NodeContext struct {
 	// related operations like storage and retrieval,
 	// rebalancing and garbage collecting stale data etc.
 	*NodeDataContext
+
+	// KubernetesFlag is set if the node is running on
+	// a Kubernetes cluster
+	KubernetesFlag bool
 }
 
 // CreateNodeContext creates and initializes all the necessary components required
@@ -70,11 +77,13 @@ func CreateNodeContext(netConfig *config.Configuration,
 	nodeInfo *config.NodeInfo,
 	refreshPeriod time.Duration,
 	restConfig *config.RESTServerConfiguration,
+	k8sFlag bool,
 ) (*NodeContext, error) {
 	nodeContext := &NodeContext{
 		Config:          netConfig,
 		CurrentNodeInfo: nodeInfo,
 		RESTConfig:      restConfig,
+		KubernetesFlag:  k8sFlag,
 	}
 
 	// Create the routing table and add current node information to it
@@ -121,6 +130,12 @@ func CreateNodeContext(netConfig *config.Configuration,
 // given join addresses are ignored since it must be the first node in the network. When it is not,
 // join addresses are contacted to obtain the network configuration and the node context is populated
 func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []string) error {
+	// If the node is running in a Kubernetes cluster, then attempt to obtain
+	// addresses of other kademlia nodes
+	if len(joinAddresses) == 0 && ctx.KubernetesFlag {
+		joinAddresses = ctx.getJoinAddressFromKubernetesCluster()
+	}
+
 	// If this is not a bootstrap node then try to obtain configuration
 	// from one of the nodes already in the network.
 	if len(joinAddresses) == 0 && !isBootstrap {
@@ -129,8 +144,8 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 	// Try joining the cluster by trying the addresses one by one. If one of them
 	// return the configuration then set it and stop.
 	if joinedNetwork := ctx.joinNetwork(joinAddresses, uint32(3)); !joinedNetwork {
-		log.Printf("[JOIN] Unable to join the network. Terminating...")
 		if !isBootstrap {
+			log.Printf("[JOIN] Unable to join the network. Terminating...")
 			return errors.New("Cannot join network")
 		} else {
 			log.Printf("[JOIN] This can be a bootstrap node. Continue..")
@@ -144,7 +159,8 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 	// Configure gRPC server and try to start it. Note that if the server starts successfully,
 	// then this thread blocks. So if there is anything else to be processed make sure this is
 	// called asynchronously.
-	listener, listenerErr := net.Listen("tcp", fmt.Sprintf("%s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.CurrentNodeInfo.Port))
+	rpcServerListenAddr := fmt.Sprintf(":%d", ctx.CurrentNodeInfo.Port)
+	listener, listenerErr := net.Listen("tcp", rpcServerListenAddr)
 	if listenerErr != nil {
 		return listenerErr
 	}
@@ -163,6 +179,53 @@ func (ctx *NodeContext) StartNodeContext(isBootstrap bool, joinAddresses []strin
 		return serveErr
 	}
 	return nil
+}
+
+// getJoinAddressFromKubernetesCluster gets the join addresses of other Kademlia nodes in
+// the Kubernetes cluster and then attempts to join the cluster through one of them
+func (ctx *NodeContext) getJoinAddressFromKubernetesCluster() []string {
+	var kubeClient *kubernetes.Clientset
+	var err error
+	kubeClient, kubeErr := ctx.getKubernetesClient()
+	if kubeErr != nil {
+		log.Printf("[K8S-JOIN] Error while obtaining K8S apiserver contact info. Error=%s", kubeErr.Error())
+		return []string{}
+	}
+	// Select all the pods with "kademlia-node" label and set the
+	// limit to the number of such nodes.
+	kademliaPodOptions := metaV1.ListOptions{
+		LabelSelector: "kademlia-node",
+		Limit:         10,
+	}
+	// Get the list of all nodes in namespace kademlia-k8s with label "kademlia-node"
+	kademliaPodList, err := kubeClient.CoreV1().Pods("kademlia-k8s").List(kademliaPodOptions)
+	if err != nil {
+		log.Printf("[K8S-JOIN] Error while retrieving other kademlia nodes in the cluster. Error=%s", err.Error())
+		return []string{}
+	}
+	// Once the list of pods with Kademlia label is obtained, find the running
+	// nodes which can be contacted. TODO: Add pod status check and consider only
+	// those which are currently running.
+	kademliaPods := kademliaPodList.Items
+	contactNodes := make([]string, 0)
+	for _, kpod := range kademliaPods {
+		// WARNING: There is an assumption here that all Kademlia nodes use
+		// the same port for RPC which is true when running in a Kubernetes cluster.
+		contactAddress := fmt.Sprintf("%s:%d", kpod.Status.PodIP, ctx.CurrentNodeInfo.Port)
+		contactNodes = append(contactNodes, contactAddress)
+	}
+	return contactNodes
+}
+
+// getKubernetesClient gets the client to contact apiserver in the cluster
+func (ctx *NodeContext) getKubernetesClient() (*kubernetes.Clientset, error) {
+	var config *rest.Config
+	var err error
+	config, err = rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(config)
 }
 
 // joinNetwork is responsible for contacting a node and getting the cluster configuration. One of the mechanism
@@ -204,7 +267,7 @@ func (ctx *NodeContext) joinNetwork(joinAddresses []string, maxAttempts uint32) 
 // IP Address. Note that RPC and REST Server ports must be different.
 func (ctx *NodeContext) startRESTServer() {
 	chiRouter := ctx.getChiRouter()
-	restServerListenAddress := fmt.Sprintf("%s:%d", ctx.CurrentNodeInfo.IPAddress, ctx.RESTConfig.RESTPort)
+	restServerListenAddress := fmt.Sprintf(":%d", ctx.RESTConfig.RESTPort)
 	httpListener, httpListenerErr := net.Listen("tcp", restServerListenAddress)
 	if httpListenerErr != nil {
 		log.Fatalf("[NODE] Error while starting REST server at address %s. Reason=%s", restServerListenAddress, httpListenerErr.Error())
