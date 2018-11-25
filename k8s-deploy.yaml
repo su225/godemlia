@@ -1,0 +1,56 @@
+# Create the kademlia-node pod which runs an individual node
+# in the cluster. Supply environment variables so that the
+# node can identify that it is running in Kubernetes cluster.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kademlia-node
+  namespace: kademlia-k8s
+  labels: 
+    app: kademlia-node
+    version: k8s-0
+spec:
+  containers:
+  - name: kademlia-node-container
+    image: su225/kademlia:0
+    ports:
+    - name: rpc
+      containerPort: 6666
+    - name: rest
+      containerPort: 6667
+    env:
+    - name: K8S_FLAG
+      value: kubernetes
+    - name: K8S_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    - name: K8S_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: K8S_POD_NS
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+  restartPolicy: Never
+---
+# All Kademlia nodes will be behind kademlia-data-service
+# using which the client should get and put the data. In
+# the cloud, it will be behind a load-balancer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kademlia-data-service
+  namespace: kademlia-k8s
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: 0.0.0.0/0
+spec:
+  selector:
+    app: kademlia-node
+    version: k8s-0
+  ports:
+  - protocol: TCP
+    port: 6667
+    targetPort: 3000
+  type: LoadBalancer

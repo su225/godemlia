@@ -194,7 +194,7 @@ func (ctx *NodeContext) getJoinAddressFromKubernetesCluster() []string {
 	// Select all the pods with "kademlia-node" label and set the
 	// limit to the number of such nodes.
 	kademliaPodOptions := metaV1.ListOptions{
-		LabelSelector: "kademlia-node",
+		LabelSelector: "app:kademlia-node",
 		Limit:         10,
 	}
 	// Get the list of all nodes in namespace kademlia-k8s with label "kademlia-node"
