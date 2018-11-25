@@ -46,10 +46,7 @@ make build-docker-container
 # Run docker container in bootstrap mode
 docker run kademlia:local
 
-# Run docker container in non-bootstrap mode
-# Make sure join address is specified. Address of other
-# node must be the external IP of that node. For now, only
-# IPv4 addresses are supported.
+# Run docker container in non-bootstrap mode. Make sure join address is specified. Address of other node must be the external IP of that node. For now, only IPv4 addresses are supported.
 docker run -e JOIN_ADDR=<hostport-other-node> kademlia:local
 ```
 
